@@ -6,6 +6,12 @@ on:
     paths:
       - huggingface/README.md
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish card to Hugging Face (unchecked = read-only preview)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -25,41 +31,90 @@ jobs:
       - name: Install Hugging Face CLI
         run: python -m pip install --disable-pip-version-check "huggingface_hub>=1.19.0,<2.0"
 
-      - name: Verify destination Space exists and is public
+      - name: Prepare card preserving current Space metadata
+        id: prepare
         run: |
           python - <<'PY'
+          import difflib
+          import hashlib
           import json
+          import os
+          import re
           import urllib.request
+          from pathlib import Path
 
-          url = "https://huggingface.co/api/spaces/Lionsgate-AI-Lab/README"
-          with urllib.request.urlopen(url) as response:
+          repo = "Lionsgate-AI-Lab/README"
+          api_url = f"https://huggingface.co/api/spaces/{repo}"
+          readme_url = f"https://huggingface.co/spaces/{repo}/resolve/main/README.md"
+          headers = {"Cache-Control": "no-cache"}
+
+          with urllib.request.urlopen(urllib.request.Request(api_url, headers=headers)) as response:
               space = json.load(response)
-          if space.get("private") is not False:
-              raise SystemExit("STOP: organization card Space is not confirmed public")
-          print("PASS: public organization card Space exists")
+          if space.get("private") is not False or space.get("sdk") != "static":
+              raise SystemExit("STOP: destination must be a public Static Space")
+
+          with urllib.request.urlopen(urllib.request.Request(readme_url, headers=headers)) as response:
+              remote = response.read()
+          source = Path("huggingface/README.md").read_bytes()
+          if source.startswith(b"---\n"):
+              raise SystemExit("STOP: GitHub source must be the card body, without YAML metadata")
+          if not remote.startswith(b"---\n"):
+              raise SystemExit("STOP: remote README does not begin with YAML frontmatter")
+          marker = remote.find(b"\n---\n", 4)
+          if marker < 0:
+              raise SystemExit("STOP: remote README has no closing YAML delimiter")
+          frontmatter = remote[:marker + 5]
+          if not re.search(rb"(?m)^sdk:[ \t]*static[ \t]*(?:#.*)?$", frontmatter):
+              raise SystemExit("STOP: remote frontmatter does not declare sdk: static")
+          if not source.strip():
+              raise SystemExit("STOP: GitHub card body is empty")
+
+          candidate = frontmatter + b"\n" + source.lstrip(b"\n")
+          Path("hf-org-card-release.md").write_bytes(candidate)
+          changed = candidate != remote
+          print("Remote YAML metadata preserved byte-for-byte")
+          print("Candidate SHA-256:", hashlib.sha256(candidate).hexdigest())
+          print("Remote SHA-256:   ", hashlib.sha256(remote).hexdigest())
+          if changed:
+              print("Preview of proposed remote README change:")
+              diff = difflib.unified_diff(
+                  remote.decode("utf-8").splitlines(keepends=True),
+                  candidate.decode("utf-8").splitlines(keepends=True),
+                  fromfile="huggingface-current/README.md",
+                  tofile="huggingface-proposed/README.md",
+              )
+              print("".join(diff))
+          else:
+              print("Already in sync: no upload needed")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"changed={str(changed).lower()}\n")
+
           PY
 
-      - name: Upload only the approved card file
+      - name: Publish only the organization card
+        if: ${{ (github.event_name == 'push' || inputs.publish == true) && steps.prepare.outputs.changed == 'true' }}
         env:
           HF_OIDC_RESOURCE: spaces/Lionsgate-AI-Lab/README
         run: |
           hf upload Lionsgate-AI-Lab/README \
-            huggingface/README.md README.md \
+            hf-org-card-release.md README.md \
             --repo-type space \
             --commit-message "docs: sync organization card from GitHub ${GITHUB_SHA::7}"
 
-      - name: Verify published bytes match GitHub
+      - name: Verify published README matches prepared bytes
+        if: ${{ github.event_name == 'push' || inputs.publish == true }}
         run: |
           python - <<'PY'
           import hashlib
           import urllib.request
           from pathlib import Path
 
-          source = Path("huggingface/README.md").read_bytes()
+          source = Path("hf-org-card-release.md").read_bytes()
           url = "https://huggingface.co/spaces/Lionsgate-AI-Lab/README/resolve/main/README.md"
-          with urllib.request.urlopen(url) as response:
+          req = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
+          with urllib.request.urlopen(req) as response:
               published = response.read()
           if published != source:
-              raise SystemExit("STOP: published card differs from GitHub source")
+              raise SystemExit("STOP: published card differs from prepared content")
           print("PASS: published card SHA-256 =", hashlib.sha256(published).hexdigest())
           PY
