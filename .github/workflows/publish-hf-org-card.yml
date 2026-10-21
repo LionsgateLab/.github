@@ -1,0 +1,65 @@
+name: Publish Hugging Face organization card
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - huggingface/README.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-hf-org-card
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Hugging Face CLI
+        run: python -m pip install --disable-pip-version-check "huggingface_hub>=1.19.0,<2.0"
+
+      - name: Verify destination Space exists and is public
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.request
+
+          url = "https://huggingface.co/api/spaces/Lionsgate-AI-Lab/README"
+          with urllib.request.urlopen(url) as response:
+              space = json.load(response)
+          if space.get("private") is not False:
+              raise SystemExit("STOP: organization card Space is not confirmed public")
+          print("PASS: public organization card Space exists")
+          PY
+
+      - name: Upload only the approved card file
+        env:
+          HF_OIDC_RESOURCE: spaces/Lionsgate-AI-Lab/README
+        run: |
+          hf upload Lionsgate-AI-Lab/README \
+            huggingface/README.md README.md \
+            --repo-type space \
+            --commit-message "docs: sync organization card from GitHub ${GITHUB_SHA::7}"
+
+      - name: Verify published bytes match GitHub
+        run: |
+          python - <<'PY'
+          import hashlib
+          import urllib.request
+          from pathlib import Path
+
+          source = Path("huggingface/README.md").read_bytes()
+          url = "https://huggingface.co/spaces/Lionsgate-AI-Lab/README/resolve/main/README.md"
+          with urllib.request.urlopen(url) as response:
+              published = response.read()
+          if published != source:
+              raise SystemExit("STOP: published card differs from GitHub source")
+          print("PASS: published card SHA-256 =", hashlib.sha256(published).hexdigest())
+          PY
