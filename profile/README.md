@@ -12,7 +12,7 @@ We run practical experiments to understand what language models can reliably do 
 
 ## Published work
 
-- [**MiMo-V2.6-Flash-MOPD · EXL3 2.52 bpw**](https://huggingface.co/Lionsgate-AI-Lab/MiMo-V2.6-Flash-MOPD-EXL3-2.52bpw) — a locally quantized checkpoint with deployment notes and agentic benchmark evidence. See its model card for known issues and ongoing investigation.
+- [**MiMo-V2.6-Flash-MOPD · EXL3 2.52 bpw**](https://huggingface.co/Lionsgate-AI-Lab/MiMo-V2.6-Flash-MOPD-EXL3-2.52bpw) — a locally quantized checkpoint with deployment notes and agentic benchmark evidence. The October 2026 release includes an independently validated layer-8 correction, with credit to contributor emkey1. See the model card for validation evidence and limitations.
 
 Additional experiments and supporting material will appear here as they are ready to share.
 
